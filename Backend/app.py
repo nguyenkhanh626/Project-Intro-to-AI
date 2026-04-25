@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, send_from_directory
 import os
 import json
 import networkx as nx
+import heapq  
 from math import radians, cos, sin, asin, sqrt
 
 # --- CẤU HÌNH ĐƯỜNG DẪN ---
@@ -18,6 +19,46 @@ def haversine(lon1, lat1, lon2, lat2):
     dlon, dlat = lon2 - lon1, lat2 - lat1 
     a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
     return 2 * asin(sqrt(a)) * 6371
+
+# --- THUẬT TOÁN DIJKSTRA ---
+def manual_dijkstra(graph, start_node, end_node):
+    # 1. Khởi tạo khoảng cách vô cực cho tất cả các trạm
+    distances = {node: float('infinity') for node in graph.nodes()}
+    distances[start_node] = 0
+    
+    # 2. Hàng đợi ưu tiên để luôn chọn trạm có khoảng cách ngắn nhất (distance, node)
+    pq = [(0, start_node)]
+    
+    # 3. Lưu vết đường đi
+    previous_nodes = {node: None for node in graph.nodes()}
+    
+    while pq:
+        current_distance, current_node = heapq.heappop(pq)
+        
+        # Nếu đã đến đích, dừng lại và dựng lại đường đi
+        if current_node == end_node:
+            path = []
+            while current_node is not None:
+                path.append(current_node)
+                current_node = previous_nodes[current_node]
+            return path[::-1], distances[end_node]
+            
+        # Nếu khoảng cách lấy ra lớn hơn khoảng cách đã biết, bỏ qua
+        if current_distance > distances[current_node]:
+            continue
+            
+        # Xét các trạm kề
+        for neighbor in graph.neighbors(current_node):
+            weight = graph[current_node][neighbor]['weight']
+            distance = current_distance + weight
+            
+            # Nếu tìm thấy đường đi ngắn hơn đến trạm kề
+            if distance < distances[neighbor]:
+                distances[neighbor] = distance
+                previous_nodes[neighbor] = current_node
+                heapq.heappush(pq, (distance, neighbor))
+                
+    return None, float('infinity')
 
 def build_subway_graph():
     global G
@@ -102,7 +143,7 @@ def find_route():
     start_id = str(data.get('start')).strip()
     end_id = str(data.get('end')).strip()
     
-    # --- KHÔI PHỤC LOG CONSOLE (DEBUG) --- [Giữ nguyên từ file gốc]
+    # --- KHÔI PHỤC LOG CONSOLE (DEBUG) ---
     print("\n" + "-"*40)
     print(f"📡 NHẬN YÊU CẦU TỪ FRONTEND:")
     print(f"📍 Điểm đi (ID): {start_id}")
@@ -113,38 +154,34 @@ def find_route():
         print("-"*40 + "\n")
         return jsonify({"status": "error", "message": "Trạm không thuộc hệ thống MRT"}), 400
     
-    # In ra tên trạm đã ánh xạ được để bạn dễ quan sát [Giữ nguyên từ file gốc]
     start_name = G.nodes[start_id]['name']
     end_name = G.nodes[end_id]['name']
     print(f"✅ ÁNH XẠ THÀNH CÔNG: {start_name} -> {end_name}")
     
-    # --- THÊM CHỨC NĂNG: TÌM ĐƯỜNG THẬT BẰNG DIJKSTRA ---
-    try:
-        # Tìm danh sách các ID trạm trên đường đi ngắn nhất
-        path = nx.shortest_path(G, source=start_id, target=end_id, weight='weight')
-        
-        # Tính tổng quãng đường
-        total_dist = sum(G.edges[path[i], path[i+1]]['weight'] for i in range(len(path)-1))
-        
-        # Tính thời gian dự kiến (Vận tốc 40km/h + 1 phút dừng mỗi trạm trung gian)
-        estimated_time = round((total_dist / 40) * 60 + (len(path) - 1))
-
-        print(f"🚀 AI ĐÃ TÌM THẤY ĐƯỜNG ĐI CHI TIẾT!")
-        print(f"📏 Tổng quãng đường: {round(total_dist, 2)} km")
+    # Gọi hàm Dijkstra
+    path, total_distance = manual_dijkstra(G, start_id, end_id)
+    
+    if not path:
+        print(f"❌ LỖI: Không tìm thấy đường đi giữa 2 trạm!")
         print("-"*40 + "\n")
-
-        return jsonify({
-            "status": "success",
-            "start": start_name,
-            "end": end_name,
-            "path": path,
-            "distance": round(total_dist, 2),
-            "estimated_time": estimated_time
-        })
-
-    except Exception as e:
-        print(f"❌ Lỗi thuật toán: {str(e)}")
         return jsonify({"status": "error", "message": "Không tìm thấy đường đi"}), 404
+
+    # Tính thời gian dự kiến (Vận tốc 40km/h + 1 phút dừng mỗi trạm trung gian)
+    estimated_time = round((total_distance / 40) * 60 + (len(path) - 1))
+    
+    print(f"🚀 AI (MANUAL DIJKSTRA) ĐÃ TÌM THẤY ĐƯỜNG!")
+    print(f"📏 Tổng quãng đường: {round(total_distance, 2)} km")
+    print(f"⏱ Thời gian: {estimated_time} phút")
+    print("-"*40 + "\n")
+
+    return jsonify({
+        "status": "success",
+        "start": start_name,
+        "end": end_name,
+        "path": path,
+        "distance": round(total_distance, 2),
+        "estimated_time": estimated_time
+    })
 
 @app.route('/')
 def index():
