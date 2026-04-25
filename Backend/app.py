@@ -86,46 +86,37 @@ build_subway_graph()
 
 # --- API ROUTES ---
 
-@app.route('/api/debug_graph', methods=['GET'])
-def debug_graph():
-    edges = [{"from": G.nodes[u]['name'], "to": G.nodes[v]['name'], "dist": d['weight']} 
-             for u, v, d in G.edges(data=True)]
-    return jsonify({
-        "total_nodes": G.number_of_nodes(),
-        "total_edges": G.number_of_edges(),
-        "sample_connections": edges[:10]
-    })
-
 @app.route('/api/find_route', methods=['POST'])
 def find_route():
     data = request.get_json()
     start_id = str(data.get('start')).strip()
     end_id = str(data.get('end')).strip()
     
-    # --- KHÔI PHỤC LOG CONSOLE (DEBUG) ---
-    print("\n" + "-"*40)
-    print(f"📡 NHẬN YÊU CẦU TỪ FRONTEND:")
-    print(f"📍 Điểm đi (ID): {start_id}")
-    print(f"📍 Điểm đến (ID): {end_id}")
-    
     if start_id not in G or end_id not in G:
-        print(f"❌ LỖI: ID trạm không tồn tại trong đồ thị MRT!")
-        print("-"*40 + "\n")
         return jsonify({"status": "error", "message": "Trạm không thuộc hệ thống MRT"}), 400
     
-    # In ra tên trạm đã ánh xạ được để bạn dễ quan sát
-    start_name = G.nodes[start_id]['name']
-    end_name = G.nodes[end_id]['name']
-    print(f"✅ ÁNH XẠ THÀNH CÔNG: {start_name} -> {end_name}")
-    print("-"*40 + "\n")
-    # -------------------------------------
+    try:
+        # Sử dụng Dijkstra để tìm đường ngắn nhất thực sự [Bổ sung]
+        path = nx.shortest_path(G, source=start_id, target=end_id, weight='weight')
+        
+        # Tính tổng khoảng cách [Bổ sung]
+        total_dist = 0
+        for i in range(len(path) - 1):
+            total_dist += G.edges[path[i], path[i+1]]['weight']
+            
+        # Tính thời gian dự kiến (giả định 40km/h + 1p dừng mỗi trạm) [Bổ sung]
+        estimated_time = round((total_dist / 40) * 60 + (len(path) - 1))
 
-    return jsonify({
-        "status": "connected",
-        "start": start_name,
-        "end": end_name,
-        "path": [start_id, end_id]
-    })
+        return jsonify({
+            "status": "success",
+            "start": G.nodes[start_id]['name'],
+            "end": G.nodes[end_id]['name'],
+            "path": path,
+            "distance": round(total_dist, 2),
+            "estimated_time": estimated_time
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/')
 def index():
@@ -136,7 +127,4 @@ def serve_static(path):
     return send_from_directory(frontend_dir, path)
 
 if __name__ == '__main__':
-    print("\n" + "="*50)
-    print(" SERVER ĐANG CHẠY TẠI: http://127.0.0.1:5000")
-    print("="*50 + "\n")
     app.run(port=5000, debug=True)
